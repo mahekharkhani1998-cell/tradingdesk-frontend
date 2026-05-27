@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import * as XLSX from "xlsx";
+import Login from "./Login.jsx";
 
 const API = import.meta.env.VITE_API_BASE || "/api";
 const TFS = ["1m","3m","5m","15m","30m","1h","4h","1D","1W"];
@@ -253,10 +254,20 @@ function nextMarketOpenStr(){
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 async function apiCall(path, opts = {}) {
+  const token = localStorage.getItem("td:token");
   const r = await fetch(API + path, {
     ...opts,
-    headers: { "Content-Type": "application/json", ...(opts.headers||{}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": "Bearer " + token } : {}),
+      ...(opts.headers || {}),
+    },
   });
+  if (r.status === 401) {
+    localStorage.removeItem("td:token");
+    window.location.reload();
+    throw new Error("Session expired");
+  }
   if (!r.ok) {
     const err = await r.text();
     throw new Error(`API ${r.status}: ${err.slice(0,200)}`);
@@ -266,6 +277,7 @@ async function apiCall(path, opts = {}) {
 
 export default function App(){
   const [theme,setTheme]=useState(()=>localStorage.getItem("td:theme")||"dark");
+  const [token,setToken]=useState(()=>localStorage.getItem("td:token"));
   const [tab,setTab]=useState(0);
   const [sym,setSym]=useState("");
   const [tf,setTf]=useState("15m");
@@ -331,10 +343,17 @@ export default function App(){
     const timeoutId=setTimeout(()=>{if(abortCtrl.current)abortCtrl.current.abort();},90000);
     try{
       const d=await fetch(API+"/analyze",{
-        method:"POST",headers:{"Content-Type":"application/json"},
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          "Authorization":"Bearer "+(localStorage.getItem("td:token")||""),
+        },
         signal:abortCtrl.current.signal,
         body:JSON.stringify({symbol:sym.trim().toUpperCase(),tf})
-      }).then(r=>r.ok?r.json():r.text().then(t=>{throw new Error(t);}));
+      }).then(r=>{
+        if(r.status===401){localStorage.removeItem("td:token");window.location.reload();throw new Error("Session expired");}
+        return r.ok?r.json():r.text().then(t=>{throw new Error(t);});
+      });
       setResult(d);
     }catch(e){
       if(e.name==="AbortError")setError("Request timed out after 90 seconds. Try again.");
@@ -414,8 +433,17 @@ export default function App(){
       const s=list[i];
       setScanProgress({done:i,total:list.length,current:s});
       try{
-        const d=await fetch(API+"/analyze",{method:"POST",headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({symbol:s,tf:scanTf})}).then(r=>r.json());
+        const d=await fetch(API+"/analyze",{
+          method:"POST",
+          headers:{
+            "Content-Type":"application/json",
+            "Authorization":"Bearer "+(localStorage.getItem("td:token")||""),
+          },
+          body:JSON.stringify({symbol:s,tf:scanTf})
+        }).then(r=>{
+          if(r.status===401){localStorage.removeItem("td:token");window.location.reload();throw new Error("Session expired");}
+          return r.json();
+        });
         if(d?.tradable)results.push({...d,tf:scanTf});
         setScanResults([...results]);
       }catch(e){console.warn(s,e.message);}
@@ -451,6 +479,10 @@ export default function App(){
   const trendCls=t=>t==="Bullish"?"pill-bull":t==="Bearish"?"pill-bear":"pill-side";
   const confCls=c=>c==="High"?"pill-ch":c==="Medium"?"pill-cm":"pill-cl";
 
+  if (!token) {
+    return <Login onLoggedIn={(t) => { setToken(t); window.location.reload(); }} />;
+  }
+
   return(<>
     <style>{css}</style>
     <div className="app">
@@ -464,6 +496,9 @@ export default function App(){
         <button className="theme-toggle" onClick={()=>setTheme(theme==="dark"?"light":"dark")}>
           {theme==="dark"?"☀ LIGHT":"🌙 DARK"}
         </button>
+        <button className="theme-toggle" style={{marginLeft:6}} onClick={()=>{
+          if(confirm("Log out?")){localStorage.removeItem("td:token");window.location.reload();}
+        }}>🔒 LOGOUT</button>
       </div>
       <div className="tabs">{TABS.map((t,i)=>(<button key={t} className={`tab${tab===i?" on":""}`} onClick={()=>setTab(i)}>{t}</button>))}</div>
       <div className="method-badge">✓ PAATHSHAALA METHOD ACTIVE (CA Rahul Ranka)</div>
