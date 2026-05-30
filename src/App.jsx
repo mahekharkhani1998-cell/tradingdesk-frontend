@@ -217,7 +217,7 @@ export default function App() {
   const [tickers, setTickers] = useState([]);
 
   // Analyze tab
-  const [sym, setSym] = useState("RELIANCE");
+  const [sym, setSym] = useState("");
   const [tf, setTf] = useState("1D");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
