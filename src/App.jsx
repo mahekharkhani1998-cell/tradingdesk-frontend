@@ -445,7 +445,7 @@ export default function App() {
                     onKeyDown={onSymKey}
                     onFocus={() => acItems.length > 0 && setAcShow(true)}
                     onBlur={() => setTimeout(() => setAcShow(false), 200)}
-                    placeholder="RELIANCE"
+                    placeholder="SCRIPT NAME"
                   />
                   {acShow && acItems.length > 0 && (
                     <div className="ac-list">
