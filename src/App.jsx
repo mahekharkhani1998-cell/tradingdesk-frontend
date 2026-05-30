@@ -217,8 +217,9 @@ export default function App() {
   const [tickers, setTickers] = useState([]);
 
   // Analyze tab
-  const [sym, setSym] = useState("");
+  const [sym, setSym] = useState("RELIANCE");
   const [tf, setTf] = useState("1D");
+  const [side, setSide] = useState("buy");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [err, setErr] = useState("");
@@ -236,7 +237,8 @@ export default function App() {
   const [alerts, setAlerts] = useState([]);
 
   // Scanner
-  const [scanResults, setScanResults] = useState(null);
+  const [scanResults, setScanResults] = useState({ buy: null, sell: null });
+  const [scanSide, setScanSide] = useState("buy");
   const [scanRunning, setScanRunning] = useState(false);
 
   // ============ EFFECTS ============
@@ -274,8 +276,11 @@ export default function App() {
 
   async function loadLastScan() {
     try {
-      const d = await apiCall("/scan/last");
-      setScanResults(d);
+      const [buy, sell] = await Promise.all([
+        apiCall("/scan/last?side=buy").catch(() => ({ findings: [], runAt: null })),
+        apiCall("/scan/last?side=sell").catch(() => ({ findings: [], runAt: null })),
+      ]);
+      setScanResults({ buy, sell });
     } catch (e) { /* nothing yet */ }
   }
 
@@ -318,7 +323,7 @@ export default function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: abortCtrl.current.signal,
-        body: JSON.stringify({ symbol: sym.trim().toUpperCase(), tf }),
+        body: JSON.stringify({ symbol: sym.trim().toUpperCase(), tf, side }),
       }).then(r => r.ok ? r.json() : r.text().then(t => { throw new Error(t); }));
       setResult(d);
     } catch (e) {
@@ -349,12 +354,19 @@ export default function App() {
 
   // ============ SCANNER ============
   async function runScan() {
-    if (!confirm("Run a full Nifty 500 scan? Takes ~3 minutes.")) return;
+    const universe = scanSide === "buy" ? "Nifty 500" : "F&O 216";
+    if (!confirm(`Run a full ${universe} ${scanSide.toUpperCase()} scan? Takes ~3 minutes.`)) return;
     setScanRunning(true);
     try {
-      const d = await apiCall("/scan/run", { method: "POST", body: JSON.stringify({ notify: true }) });
-      setScanResults(d);
-      alert(`Scan done. Found ${d.findings.length} setups. Telegram sent.`);
+      // Fire and forget — scan takes longer than browser timeout
+      fetch(API + "/scan/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notify: true, side: scanSide }),
+      });
+      alert(`${scanSide.toUpperCase()} scan started in background. Telegram in ~3 min.`);
+      // Refresh results after 3.5 minutes
+      setTimeout(() => loadLastScan(), 210000);
     } catch (e) { alert("Scan failed: " + e.message); }
     finally { setScanRunning(false); }
   }
@@ -397,7 +409,7 @@ export default function App() {
         <div className="tabs">
           <button className={`tab ${tab === "analyze" ? "active" : ""}`} onClick={() => setTab("analyze")}>Analyze</button>
           <button className={`tab ${tab === "scanner" ? "active" : ""}`} onClick={() => setTab("scanner")}>
-            Scanner {scanResults?.findings?.length > 0 && <span className="tab-count">{scanResults.findings.length}</span>}
+            Scanner {((scanResults?.buy?.findings?.length || 0) + (scanResults?.sell?.findings?.length || 0)) > 0 && <span className="tab-count">{(scanResults.buy?.findings?.length || 0) + (scanResults.sell?.findings?.length || 0)}</span>}
           </button>
           <button className={`tab ${tab === "alerts" ? "active" : ""}`} onClick={() => setTab("alerts")}>
             Alerts {alerts.length > 0 && <span className="tab-count">{alerts.length}</span>}
@@ -416,6 +428,13 @@ export default function App() {
             <div>
               <div className="method-banner">✓ Paathshaala Method Active (CA Rahul Ranka)</div>
 
+              <div className="panel" style={{ marginBottom: 12 }}>
+                <div className="panel-title">Trade Side</div>
+                <div className="tf-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                  <button className={`tf-btn ${side === "buy" ? "active" : ""}`} onClick={() => setSide("buy")} style={side === "buy" ? { background: "#52ffae", color: "#0a0e14", borderColor: "#52ffae" } : {}}>🟢 BUY / LONG</button>
+                  <button className={`tf-btn ${side === "sell" ? "active" : ""}`} onClick={() => setSide("sell")} style={side === "sell" ? { background: "#ff5e6e", color: "#0a0e14", borderColor: "#ff5e6e" } : {}}>🔴 SELL / SHORT</button>
+                </div>
+              </div>
               <div className="panel">
                 <div className="panel-title">Symbol</div>
                 <div className="input-row">
@@ -426,7 +445,7 @@ export default function App() {
                     onKeyDown={onSymKey}
                     onFocus={() => acItems.length > 0 && setAcShow(true)}
                     onBlur={() => setTimeout(() => setAcShow(false), 200)}
-                    placeholder="SCRIPT NAME"
+                    placeholder="RELIANCE"
                   />
                   {acShow && acItems.length > 0 && (
                     <div className="ac-list">
@@ -462,8 +481,8 @@ export default function App() {
                 <div className="panel">
                   <div className="empty">
                     <div className="empty-big">▸</div>
-                    Enter a symbol on the left and click Analyze<br />
-                    to run Paathshaala methodology check.
+                    Select trade side, enter symbol, click Analyze.<br />
+                    Runs full Paathshaala methodology check for BUY or SHORT.
                   </div>
                 </div>
               )}
@@ -504,7 +523,7 @@ export default function App() {
                     {/* Verdict card */}
                     <div className="verdict-panel">
                       <span className={`verdict-badge ${result.tradable ? "verdict-tradable" : "verdict-wait"}`}>
-                        {result.tradable ? "▸ Tradable" : "⏸ Wait"}
+                        {result.tradable ? (result.side === "SELL/SHORT" || side === "sell" ? "▾ Short Tradable" : "▸ Tradable") : "⏸ Wait"}
                       </span>
                       <div className="verdict-setup">{result.setup || "—"} <span style={{ color: "var(--dim)", fontSize: 11 }}>({result.trend})</span></div>
                       <div className="verdict-reason">{result.reason}</div>
@@ -596,16 +615,26 @@ export default function App() {
         {/* ========= SCANNER TAB ========= */}
         {tab === "scanner" && (
           <div>
+            {/* BUY/SELL switcher */}
+            <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+              <button className={`tab ${scanSide === "buy" ? "active" : ""}`} onClick={() => setScanSide("buy")} style={{ border: "1px solid var(--border)", borderRadius: 4, padding: "8px 16px", color: scanSide === "buy" ? "var(--green)" : "var(--dim)", borderColor: scanSide === "buy" ? "var(--green)" : "var(--border)" }}>
+                🟢 BUY {scanResults?.buy?.findings?.length > 0 && <span className="tab-count">{scanResults.buy.findings.length}</span>}
+              </button>
+              <button className={`tab ${scanSide === "sell" ? "active" : ""}`} onClick={() => setScanSide("sell")} style={{ border: "1px solid var(--border)", borderRadius: 4, padding: "8px 16px", color: scanSide === "sell" ? "var(--red)" : "var(--dim)", borderColor: scanSide === "sell" ? "var(--red)" : "var(--border)" }}>
+                🔴 SELL {scanResults?.sell?.findings?.length > 0 && <span className="tab-count">{scanResults.sell.findings.length}</span>}
+              </button>
+            </div>
+
             <div className="scan-trigger">
-              <button className="btn-icon" onClick={runScan} disabled={scanRunning} style={{ background: "var(--green)", color: "var(--bg)", borderColor: "var(--green)" }}>
-                {scanRunning ? "Scanning…" : "▸ Run Scan Now"}
+              <button className="btn-icon" onClick={runScan} disabled={scanRunning} style={{ background: scanSide === "buy" ? "var(--green)" : "var(--red)", color: "var(--bg)", borderColor: scanSide === "buy" ? "var(--green)" : "var(--red)" }}>
+                {scanRunning ? "Scanning…" : `▸ Run ${scanSide.toUpperCase()} Scan Now`}
               </button>
               <span style={{ fontSize: 11, color: "var(--dim)" }}>
-                Auto-runs daily at 9:30 AM IST. Last run: {scanResults?.runAt ? new Date(scanResults.runAt).toLocaleString("en-IN") : "Never"}
+                Auto: BUY 9:30 AM, SELL 9:35 AM IST Mon-Fri. {scanSide.toUpperCase()} last: {scanResults?.[scanSide]?.runAt ? new Date(scanResults[scanSide].runAt).toLocaleString("en-IN") : "Never"}
               </span>
             </div>
 
-            {!scanResults?.findings?.length && (
+            {!scanResults?.[scanSide]?.findings?.length && (
               <div className="empty">
                 <div className="empty-big">⊟</div>
                 No scan results yet. Click "Run Scan Now" to check Nifty 500 for setups.<br />
@@ -614,7 +643,7 @@ export default function App() {
             )}
 
             <div className="scanner-grid">
-              {(scanResults?.findings || []).map((f, i) => (
+              {(scanResults?.[scanSide]?.findings || []).map((f, i) => (
                 <div className="scanner-card" key={i}>
                   <div>
                     <div className="scanner-sym">{f.symbol}</div>
@@ -626,11 +655,11 @@ export default function App() {
                   </div>
                   <div className="scanner-meta">
                     RSI: {fmt(f.rsi, 1)}<br/>
-                    Support: ₹{fmt(f.support)}
+                    {f.side === "sell" || scanSide === "sell" ? "Resistance" : "Support"}: ₹{fmt(f.support || f.resistance)}
                   </div>
                   <div>
                     <div className="scanner-score">{f.score}%</div>
-                    <button className="mini-btn" style={{ width: "100%", marginTop: 6 }} onClick={() => { setSym(f.symbol); setTf("1D"); setTab("analyze"); setTimeout(analyze, 100); }}>
+                    <button className="mini-btn" style={{ width: "100%", marginTop: 6 }} onClick={() => { setSym(f.symbol); setTf("1D"); setSide(scanSide); setTab("analyze"); setTimeout(analyze, 100); }}>
                       Analyze ▸
                     </button>
                   </div>
